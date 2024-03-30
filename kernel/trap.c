@@ -65,6 +65,49 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if (r_scause() == 15){
+    //5.cow lab
+    //Modify usertrap() to recognize page faults. 
+    //When a page-fault occurs on a COW page, allocate a new page with kalloc(), 
+    //copy the old page to the new page, and install the new page in the PTE with PTE_W set.
+    uint64 fault_va = PGROUNDDOWN(r_stval());
+    pte_t *pte = walk(p->pagetable,fault_va,0);
+    if(*pte & PTE_C){
+      uint64 pa = PTE2PA(*pte);
+      uint flags = PTE_FLAGS(*pte);
+      flags = flags | PTE_W;
+      char* newpage = kalloc();
+      if(newpage == 0){
+        p->killed=1;
+        exit(1);
+      }
+      memmove(newpage,(char*)pa,PGSIZE);
+      mappages(p->pagetable,fault_va,PGSIZE,(uint64)newpage,flags);
+      kfree((char*)pa);//decrease old page's reference count
+    }
+  //   char* mem;
+  //   pte_t* pte;
+  //   for(int i=0;i<p->sz;i+=PGSIZE){
+  //     if((pte = walk(p->pagetable, i, 0)) == 0)
+  //       panic("usertrap page fault: pte should exist");
+  //     if((*pte & PTE_V) == 0)
+  //       panic("usertrap page fault: page not present");
+  //     pa = PTE2PA(*pte);
+  //     flags = PTE_FLAGS(*pte);
+  //     new_flags = flags | (0x004);
+  //     if((mem = kalloc()) == 0){
+  //       p->killed=1;
+  //       goto err;
+  //     }
+  //     memmove(mem, (char*)pa, PGSIZE);
+  //     if(mappages(p->pagetable, i, PGSIZE, (uint64)mem, new_flags) != 0){
+  //       kfree(mem);
+  //       goto err;
+  //     }
+  //   }
+  // err:
+  //   uvmunmap(new, 0, i / PGSIZE, 1);
+  //   return -1;
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {

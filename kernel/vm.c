@@ -15,6 +15,8 @@ extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
+extern int reference_count[];
+
 // Make a direct-map page table for the kernel.
 pagetable_t
 kvmmake(void)
@@ -303,20 +305,26 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
+  //char *mem;
 
+  //Modify uvmcopy() to map the parent's physical pages into the child, instead of allocating new pages. 
+  //Clear PTE_W in the PTEs of both child and parent.
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
+    *pte = (*pte & ~ PTE_W) | PTE_C;
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    reference_count[pa/PGSIZE]++;
+    // if((mem = kalloc()) == 0)
+    //   goto err;
+    // memmove(mem, (char*)pa, PGSIZE);
+    // if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
+    if(mappages(new, i, PGSIZE, (uint64)pa, flags) != 0){
+      //kfree(mem);
+      printf("uvmcopy: mappages err\n");
       goto err;
     }
   }
@@ -347,16 +355,34 @@ int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
+  uint flags;
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-    pa0 = walkaddr(pagetable, va0);
+    pte_t* pte = walk(pagetable,va0,0);
+    pa0 = walkaddr(pagetable, va0);//this pa0 maybe just readable,but user process require readable and writable
     if(pa0 == 0)
       return -1;
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
-    memmove((void *)(pa0 + (dstva - va0)), src, n);
+    // memmove((void *)(pa0 + (dstva - va0)), src, n);
+    if((*pte & PTE_C)!=0){
+      char* mem = kalloc();
+      if(mem == 0){
+        return -1;
+      }
+      n = PGSIZE - (dstva - va0);
+      if(n > len)
+        n = len;
+      memmove((void *)(mem + (dstva - va0)), src, n);
+      *pte = *pte | PTE_W;
+      flags = PTE_FLAGS(*pte);
+      mappages(pagetable,va0,PGSIZE,(uint64)mem,flags);
+      kfree((char*)pa0);
+    }else{
+      memmove((void *)(pa0 + (dstva - va0)), src, n);
+    }
 
     len -= n;
     src += n;
